@@ -9,9 +9,17 @@ This module creates hosts and switches and wires them according to the link spec
 
 """
 
+from mininet.node import Host, CPULimitedHost
+from util.nodeExt import DynamicDocker
 from mininet.topo import Topo
 import json
 from mininet.log import setLogLevel, info
+
+HOST_CLASSES = {
+    'Host': Host,
+    'CPULimitedHost': CPULimitedHost,
+    'DynamicDocker': DynamicDocker
+}
 
 class G2Topo(Topo):
     """Topology Definition.
@@ -34,9 +42,11 @@ class G2Topo(Topo):
         switchNames = topoDict['switches']
 
         # Create hosts and switches.
-        hosts = [self.addHost(h, ip=topoDict[h]['IP'], mac=topoDict[h]['MAC'])
+        self._hosts = [self.addHost(h, ip=topoDict[h].get('IP'), mac=topoDict[h].get('MAC'),
+                                    cls=HOST_CLASSES.get(topoDict[h].get('clsStr', 'Host')),
+                                    **topoDict[h])
                   for h in hostNames]
-        switches = [self.addSwitch(s)
+        self._switches = [self.addSwitch(s)
                    for s in switchNames]
 
         # Wire up hosts and switches.

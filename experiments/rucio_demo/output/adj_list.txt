@@ -1,0 +1,13 @@
+#g2Launcher.py -i /etc/g2-mininet/rucio_demo/input/ -o /etc/g2-mininet/rucio_demo/output/
+# GMT Sun Mar 20 09:47:19 2022
+# 
+xrd1 s1
+s1 s3
+s3 s2 rc s4
+xrd2 s2
+s2
+rc
+s4 xrd3 s5
+xrd3
+s5 xrd4
+xrd4

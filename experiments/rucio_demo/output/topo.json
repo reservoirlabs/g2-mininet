@@ -1,0 +1,28 @@
+{
+ "xrd1": {
+  "clsStr": "DynamicDocker",
+  "IP": "10.0.0.251/32",
+  "MAC": "000000000001"
+ },
+ "rc": {
+  "cname": "rucio",
+  "clsStr": "DynamicDocker",
+  "IP": "10.0.0.250/32",
+  "MAC": "000000000002"
+ },
+ "xrd4": {
+  "clsStr": "DynamicDocker",
+  "IP": "10.0.0.254/32",
+  "MAC": "000000000003"
+ },
+ "xrd2": {
+  "clsStr": "DynamicDocker",
+  "IP": "10.0.0.252/32",
+  "MAC": "000000000004"
+ },
+ "xrd3": {
+  "clsStr": "DynamicDocker",
+  "IP": "10.0.0.253/32",
+  "MAC": "000000000005"
+ }
+}

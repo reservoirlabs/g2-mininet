@@ -13,7 +13,7 @@ from mininet.util import quietRun
 from mininet.node import OVSKernelSwitch, RemoteController
 from mininet.cli import CLI
 from mininet.log import setLogLevel, info, debug
-from mininet.util import waitListening, custom
+from mininet.util import custom
 from mininet.link import TCLink
 from mininet.node import CPULimitedHost
 from mininet.clean import cleanup
@@ -24,7 +24,6 @@ import os
 from time import time, sleep
 from functools import partial
 from multiprocessing import Process
-from multiprocessing import Pool
 from subprocess import Popen, PIPE, STDOUT
 import re
 import signal, sys
@@ -37,8 +36,6 @@ from requests import put
 from g2Topo import G2Topo
 from util.topoGraphUtil import writeAdjList, generatePaths, generateRoutingConf, readFromPathFile, getPathFeasibility, getG2Inputs
 from util.traceParser import TraceParser
-from util.resultsProcessing import ResultGenerator
-from util.monitor import Monitor
 from util.jainsFairnessIndex import calculateJainsIndex
 
 # Controller IP and port constants.
@@ -127,7 +124,7 @@ class ConfigHandler:
             if not os.path.isfile(file_name):
                 raise FileNotFoundError("**** [G2]: could not find config file from path {}; exiting....\n".format(file_name))
             self.config.read(file_name)
-    
+
         except FileNotFoundError as err:
             info(str(err))
             self.config = None
@@ -151,7 +148,7 @@ class ConfigHandler:
         self.isDebug = int(generalDict['debug'])
         self.isCLI = int(generalDict['start_cli'])
         self.ccAlgo = generalDict['tcp_congestion_control']
-        self.iperfVer = int(generalDict['iperf_version'])
+        self.iperfVer = int(generalDict.get('iperf_version', 3))
         self.adjacencyFile = os.path.join(outPath, generalDict['adjacency_list_outfile'])
         self.routingConf = os.path.join(outPath, generalDict['routing_conf_outfile'])
 
@@ -167,10 +164,12 @@ class ConfigHandler:
         self.utilizationInterval = float(monitorDict['utilization_monitor_interval'])
         self.prefix = monitorDict['result_prefix']
         self.onlyResults = int(monitorDict['only_results_processing'])
+        self.runTest = int(monitorDict.get('run_test', 1))
         # Save all results to outPath/benchmarks directory.
         self.benchPath = os.path.join(outPath, BENCHMARK_PATH)
         if not os.path.exists(self.benchPath):
                 os.makedirs(self.benchPath)
+        self.genResults = int(monitorDict.get('generate_results', 1))
         self.convTimeType = monitorDict['convergence_time_method']
         self.convWindow = monitorDict['window_size']
         self.convThresh = monitorDict['threshold']
@@ -212,6 +211,10 @@ class ConfigHandler:
                 if node.startswith('s'):
                     topoDict['switches'].add(node)
 
+        hostInfo = self.parseHostInfo(confDict.get('host_info', None))
+        topoDict.update(hostInfo)
+        topoDict['hosts'].update(hostInfo)
+
         # Obtain IP address information from the config file.
         # Set MAC addresses automatically and sequentially.
         baseAddr = confDict['base_addr'].strip()
@@ -232,18 +235,19 @@ class ConfigHandler:
             netmaskLen = None
 
         assignedIPs = set()
+        _num = 0
         for hn in topoDict['hosts']:
-            num = hn[1:]
+            _num += 1
             if not subnetAddr:
-                currIP = generateIPAddress(baseAddr,num,hostAddr,netmaskLen)
+                currIP = generateIPAddress(baseAddr,_num,hostAddr,netmaskLen)
                 topoDict[hn]['IP'] = currIP
                 assignedIPs.add(currIP)
             if not hostAddr:
-                currIP = generateIPAddress(baseAddr,subnetAddr,num,netmaskLen)
+                currIP = generateIPAddress(baseAddr,subnetAddr,_num,netmaskLen)
                 topoDict[hn]['IP'] = currIP
                 assignedIPs.add(currIP)
 
-            topoDict[hn]['MAC'] = dpid_to_mac(int(num))
+            topoDict[hn]['MAC'] = dpid_to_mac(int(_num))
 
         # IF 'override_ip' configuration was set, we read the IP addresses that are specified under 'ip_info' config parameter.
         # For the hosts present in the 'ip_info' config, we set the IP to user-specified value.
@@ -292,6 +296,36 @@ class ConfigHandler:
                 info("**** [G2]: exception on %s!" % option, "\n")
                 dict1[option] = None
         return dict1
+
+    def parseHostInfo(self, confStr):
+        """
+        Parse a string of host info that is specified in config file.
+
+        Args:
+            confStr (str): Host info specification obtained from config file.
+
+        Returns:
+            dict: Containing host info parameters.
+        """
+        hostInfo = {}
+
+        specs = confStr.split(';')
+        for spec in specs:
+            if not spec:
+                continue
+            splits = spec.split(',')
+            splits = [s.strip() for s in splits]
+            hinfo = {}
+            _hname = splits[0]
+            _cname = splits[1]
+            if _cname != 'N/A':
+                hinfo['cname'] = _cname
+            _clsStr = splits[2]
+            if _clsStr != 'N/A':
+                hinfo['clsStr'] = _clsStr
+            hostInfo[_hname] = hinfo
+
+        return hostInfo
 
     def parseDefaultLinkInfo(self, confStr):
         """Parse a string of default link info that is specified in config file.
@@ -508,7 +542,7 @@ class NetworkSimulator:
         if self.paths:
             feasible = getPathFeasibility(self.net, adjFile, self.paths)
             if feasible:
-                routingConf = generateRoutingConf(self.net, self.paths, outFile)
+                _ = generateRoutingConf(self.net, self.paths, outFile)
                 info("**** [G2]: path specs are FEASIBLE; generated routing conf file", outFile, "\n")
             else:
                 if os.path.exists(outFile):
@@ -638,8 +672,8 @@ class NetworkMonitor:
                 if j > i:
                     intfs = s1.connectionsTo(s2)
                     for intf in intfs:
-                        s1ifIdx = topo['nodes'][s1.name]['ports'][intf[0].name]['ifindex']
-                        s2ifIdx = topo['nodes'][s2.name]['ports'][intf[1].name]['ifindex']
+                        # s1ifIdx = topo['nodes'][s1.name]['ports'][intf[0].name]['ifindex']
+                        # s2ifIdx = topo['nodes'][s2.name]['ports'][intf[1].name]['ifindex']
                         linkName = '%s-%s' % (s1.name, s2.name)
                         topo['links'][linkName] = {'node1': s1.name, 'port1': intf[0].name, 'node2': s2.name, 'port2': intf[1].name}
                 j += 1
@@ -701,7 +735,7 @@ class NetworkMonitor:
                 if self.config.iperfVer == 2:
                     p = Process(target=self.launchIperf2, args=(j,))
                 if self.config.iperfVer == 3:
-                    p = Process(target=self.launchIperf3, args=(j,))                
+                    p = Process(target=self.launchIperf3, args=(j,))
                 procs.append(p)
                 p.start()
 
@@ -750,38 +784,38 @@ class NetworkMonitor:
         while (not cmdOut) or ('iperf' not in cmdOut):
             debug("**** [G2]: traffic-flow %d waiting for iperf server to start on host %s\n" %(jobID, job['dst']))
             cmdOut = server.cmd("sudo lsof -i -P -n | grep LISTEN | grep %d" %serverPort)
-        
+
         if self.config.isPingAll == 2:
             pingLog = open(os.path.join(self.config.benchPath, "%s_ping_%d.txt" %(pfx, jobID)), "w")
             popenPing = server.popen('ping -D -i %s %s' % (self.config.frequency, client.IP()), stdout=pingLog, stderr=STDOUT)
-            
+
         fsClnt = open(os.path.join(self.config.benchPath, "%s_iperf_client_%d.txt" %(pfx, jobID)), "w")
         popenClnt = client.popen('iperf -c %s -p %d -i %f -n %f -Z %s' % (server.IP(), serverPort, intervalSec, size, ccAlgo), stdout=fsClnt, stderr=STDOUT) # Or, sys.stdout
         retCode = popenClnt.wait()
-        
+
         fname = os.path.join(self.config.benchPath, "%s_iperf_client_%d.txt" %(pfx, jobID))
         fail = False
         with open(fname) as fs:
             fileContent = fs.read()
             if "connect failed" in fileContent:
                 fail = True
-        
+
         if not fail:
             debug("Successfully started iperf client of job {}\n".format(jobID))
         elif counter >= 50:
-            info("Retried too many times, giving up starting iperf client of job {}\n".format(jobID))   
+            info("Retried too many times, giving up starting iperf client of job {}\n".format(jobID))
         else:
             info("Retrying job (ID = {})\n".format(jobID))
             self.launchIperf2(job, counter + 1)
-        
+
         # Once client popen returns, wait for a small duration to allow the server receive all the traffic, and forcefully terminate server.
         sleep(.100) # 100 milliseconds
         popenSrv.kill()
-            
+
         if self.config.isPingAll == 2:
             popenPing.kill()
             pingLog.close()
-        
+
         debug("**** [G2]: iperf done; flow ID:%d, src:%s, dst:%s; client iperf return code:%s\n" %(jobID, job['src'], job['dst'], retCode))
 
     def launchIperf3(self, job, counter = 0):
@@ -821,11 +855,11 @@ class NetworkMonitor:
         while (not cmdOut) or ('iperf3' not in cmdOut):
             debug("**** [G2]: traffic-flow %d waiting for iperf server to start on host %s\n" %(jobID, job['dst']))
             cmdOut = server.cmd("sudo lsof -i -P -n | grep LISTEN | grep %d" %serverPort)
-        
+
         if self.config.isPingAll == 2:
             pingLog = open(os.path.join(self.config.benchPath, "%s_ping_%d.txt" %(pfx, jobID)), "w")
             popenPing = server.popen('ping -D -i %s %s' % (self.config.frequency, client.IP()), stdout=pingLog, stderr=STDOUT)
-            
+
         fsClnt = os.path.join(self.config.benchPath, "%s_iperf_client_%d.txt" %(pfx, jobID))
         if os.path.exists(fsClnt):
             os.remove(fsClnt)
@@ -844,23 +878,23 @@ class NetworkMonitor:
             fileContent = fs.read()
             if "iperf3: error" in fileContent:
                 fail = True
-        
+
         if not fail:
             debug("Successfully started iperf client of job {}".format(jobID))
         elif counter >= 50:
-            info("Retried too many times, giving up starting iperf client of job {}".format(jobID))   
+            info("Retried too many times, giving up starting iperf client of job {}".format(jobID))
         else:
             info("Retrying job (ID = {})".format(jobID))
             self.launchIperf3(job, counter + 1)
-        
+
         # Once client popen returns, wait for a small duration to allow the server receive all the traffic, and forcefully terminate server.
         sleep(.100) # 100 milliseconds
         popenSrv.kill()
-            
+
         if self.config.isPingAll == 2:
             popenPing.kill()
             pingLog.close()
-        
+
         debug("**** [G2]: iperf done; flow ID:%d, src:%s, dst:%s; client iperf return code:%s\n" %(jobID, job['src'], job['dst'], retCode))
 
     def monitoredInterfaceList(self):
@@ -982,18 +1016,20 @@ def main():
         monitor.sendTopology(agent, collector)
         monitor.testPing()
 
-        # Monitor CPU and memory during bandwidth tests.
-        systemMonitor = Monitor(ch.utilizationInterval)
-        systemMonitor.start()
-        info("**** [G2]: started monitoring CPU and memory usage\n")
-        systemMonitor.monitor()
+        if ch.runTest:
+            from util.monitor import Monitor
+            # Monitor CPU and memory during bandwidth tests.
+            systemMonitor = Monitor(ch.utilizationInterval)
+            systemMonitor.start()
+            info("**** [G2]: started monitoring CPU and memory usage\n")
+            systemMonitor.monitor()
 
-        monitor.testBandwidth()
+            monitor.testBandwidth()
 
-        systemMonitor.stop()
-        info("**** [G2]: finished monitoring CPU and memory usage\n")
-        cpuMemFile = os.path.join(ch.benchPath, "%s_cpu_memory_usage.csv" %(ch.prefix))
-        systemMonitor.writeReadings(cpuMemFile)
+            systemMonitor.stop()
+            info("**** [G2]: finished monitoring CPU and memory usage\n")
+            cpuMemFile = os.path.join(ch.benchPath, "%s_cpu_memory_usage.csv" %(ch.prefix))
+            systemMonitor.writeReadings(cpuMemFile)
 
         # CLI and stopping the network.
         if network.config.isCLI:
@@ -1002,44 +1038,46 @@ def main():
             info("**** [G2]: not starting CLI; exiting...\n")
         network.net.stop()
 
-    info("**** [G2]: post-processing the output of monitoring and generating results\n")
-    # Obtain details on flows, links, and RTT.
-    (C, F, flowInfo) = getG2Inputs(ch, network)
-    if not C:
-        info("**** [G2]: error in input configurations caused an empty C dictionary; exiting...\n")
-        return
-    if not F:
-        info("**** [G2]: error in input configurations caused an empty F dictionary; exiting...\n")
-        return
-    # Process iperf output and generate results.
-    rg = ResultGenerator(ch, C, F, flowInfo)
-    if ch.iperfVer == 2:
-        results = rg.parseIperfOutput_iperf2()
-    elif ch.iperfVer == 3:
-        results = rg.parseIperfOutput_iperf3()
-    slowestTime = rg.getMaxCompletionTime(results)
-    theoreticalSlowestTime = rg.getMaxTheoreticalCompletionTime()
-    with open(os.path.join(ch.benchPath, "%s_experiment_duration.csv" %ch.prefix), "a") as fd:
-        fd.write("%.2f,%.2f\n" %(slowestTime, theoreticalSlowestTime))
-    rg.writeToJson(results)
-    rg.writeToCsv(results)
-    rg.plotResults(results)
-    if ch.isSwStat:
-        rg.plotSwitchStats()
-    rg.plotUtilization()
-    # Jain's fairness index.
-    experimentRates = []
-    expectedRates = []
-    for flowID in range(1,len(ch.trace.jobs) + 1):
-        experimentRates.append(results[flowID]['receiverAvgMbps'])
-        for flow in ch.trace.jobs:
-            if flow['id'] == flowID:
-                expectedRates.append(flow['share'])
-    jainsIndex = calculateJainsIndex(experimentRates, expectedRates)
-    with open(os.path.join(ch.benchPath, "%s_fairness_index.csv" %ch.prefix), "w") as fd:
-        fd.write("%f\n" %jainsIndex)
+    if ch.genResults:
+        from util.resultsProcessing import ResultGenerator
+        info("**** [G2]: post-processing the output of monitoring and generating results\n")
+        # Obtain details on flows, links, and RTT.
+        (C, F, flowInfo) = getG2Inputs(ch, network)
+        if not C:
+            info("**** [G2]: error in input configurations caused an empty C dictionary; exiting...\n")
+            return
+        if not F:
+            info("**** [G2]: error in input configurations caused an empty F dictionary; exiting...\n")
+            return
+        # Process iperf output and generate results.
+        rg = ResultGenerator(ch, C, F, flowInfo)
+        if ch.iperfVer == 2:
+            results = rg.parseIperfOutput_iperf2()
+        elif ch.iperfVer == 3:
+            results = rg.parseIperfOutput_iperf3()
+        slowestTime = rg.getMaxCompletionTime(results)
+        theoreticalSlowestTime = rg.getMaxTheoreticalCompletionTime()
+        with open(os.path.join(ch.benchPath, "%s_experiment_duration.csv" %ch.prefix), "a") as fd:
+            fd.write("%.2f,%.2f\n" %(slowestTime, theoreticalSlowestTime))
+        rg.writeToJson(results)
+        rg.writeToCsv(results)
+        rg.plotResults(results)
+        if ch.isSwStat:
+            rg.plotSwitchStats()
+        rg.plotUtilization()
+        # Jain's fairness index.
+        experimentRates = []
+        expectedRates = []
+        for flowID in range(1,len(ch.trace.jobs) + 1):
+            experimentRates.append(results[flowID]['receiverAvgMbps'])
+            for flow in ch.trace.jobs:
+                if flow['id'] == flowID:
+                    expectedRates.append(flow['share'])
+        jainsIndex = calculateJainsIndex(experimentRates, expectedRates)
+        with open(os.path.join(ch.benchPath, "%s_fairness_index.csv" %ch.prefix), "w") as fd:
+            fd.write("%f\n" %jainsIndex)
 
-    info("**** [G2]: plots and results written to %s with prefix %s\n" %(ch.benchPath, ch.prefix))
+        info("**** [G2]: plots and results written to %s with prefix %s\n" %(ch.benchPath, ch.prefix))
 
     # Clean up Mininet junk which might be left over from old runs.
     info("**** [G2]: cleaning Mininet\n\n")
