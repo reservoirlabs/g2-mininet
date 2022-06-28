@@ -52,6 +52,8 @@ This directory includes artifacts and experiments published in various papers. T
     1. Fig. 12, A16, A17. A19 [3]
 24. `g2_network36`: A four-pod folded-clos network with tapering 0.5 and 20 skewness values.
 25. `g2_network37`: A four-pod folded-clos network with tapering 1 and 20 skewness values.
+26. `rucio_demo`: A demo topology that was presented in the IETF 113 Hackathon.
+    1. Demo project repo [6]
 
 ### References
 [1] J. Ros-Giralt, A. Bohara, S. Yellamraju, H. Langston, R. Lethin, Y. Jiang, L. Tassiulas, J. Li, Y. Lin, Y. Tan, M. Veeraraghavan, "On the Bottleneck Structure of Congestion-Controlled Networks," ACM SIGMETRICS, Boston, June 2020.
@@ -63,3 +65,5 @@ This directory includes artifacts and experiments published in various papers. T
 [4] Jordi Ros-Giralt, Noah Amsel, Sruthi Yellamraju, James Ezick, Richard Lethin, Yuang Jiang, Aosong Feng, Leandros Tassiulas,  Zhenguo Wu, Min Yeh Teh, Keren Bergman, "A Quantitative Theory of Bottleneck Structures for Data Networks," Submitted to Transactions on Networking, 2021. (Under review).
 
 [5] Noah Amsel, Jordi Ros-Giralt, Sruthi Yellamraju, Brendan von Hofe, Richard Lethin,  "Computing Bottleneck Structures at Scale for High-Precision Network Performance Analysis," International Workshop on Innovating the Network for Data Intensive Science (INDIS), Supercomputing, Denver, Nov 2020.
+
+[6] <https://github.com/openalto/ietf-hackathon>
